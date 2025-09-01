@@ -35,7 +35,7 @@ typedef enum
 /*** macros *************************************************************/
  /*** functions ************************************************************/
 matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, uint16_t* value1, uint16_t* value2, uint16_t* value3);
-matlab_communication_error_t matlabCommunication_parsingResponse(matlab_communication_t* matlabCom);
+matlab_communication_error_t matlabCommunication_getParserError(matlab_communication_t* matlabCom);
 matlab_communication_t* matlabCommunication_init(uart_t* uart);
 
 

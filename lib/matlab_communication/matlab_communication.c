@@ -158,16 +158,14 @@ matlab_communication_error_t matlabCommunication_sendParameter(matlab_communicat
     }
 }
 /***************************************************************************
- * Registers the UART RX callback for the given MATLAB communication 
- * instance to begin receiving and parsing incoming bytes.
+ * This functions returns parsing errors
  **************************************************************************/
-matlab_communication_error_t matlabCommunication_parsingResponse(matlab_communication_t* matlabCom)
+matlab_communication_error_t matlabCommunication_getParserError(matlab_communication_t* matlabCom)
 {
     if (matlabCom == NULL) {return E_MATLABCOMERROR_INVALID_POINTER;}
 
     if(matlabCom->initialised)
     {
-        //uart_registerRxCallback(matlabCom->communication, _uartRxWrapper);
         return matlabCom->error;
     }
     else
@@ -194,6 +192,8 @@ matlab_communication_t* matlabCommunication_init(uart_t* uart)
     matlabCom->error = E_MATLABCOMERROR_OK;
     matlabCom->initialised = true;
 
+    // Register a global UART RX callback to automatically handle incoming bytes 
+    // and feed them into the MATLAB parser state machine.
     uart_registerRxCallback(uart, _uartRxWrapper);
 
     _instanceCount++;

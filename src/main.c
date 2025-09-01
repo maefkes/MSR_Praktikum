@@ -24,7 +24,7 @@ int main(void)
 
     volatile matlab_communication_error_t error;
 
-    error = matlabCommunication_parsingResponse(matlabCommunication);
+    error = matlabCommunication_getParserError(matlabCommunication);
     printf("Error: %d\n", error);
 
     while(1)

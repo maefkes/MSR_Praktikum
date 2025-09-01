@@ -167,7 +167,7 @@ matlab_communication_error_t matlabCommunication_parsingResponse(matlab_communic
 
     if(matlabCom->initialised)
     {
-        uart_registerRxCallback(matlabCom->communication, _uartRxWrapper);
+        //uart_registerRxCallback(matlabCom->communication, _uartRxWrapper);
         return matlabCom->error;
     }
     else

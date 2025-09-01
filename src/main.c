@@ -32,5 +32,5 @@ int main(void)
         HAL_Delay(3000);
     }
     
-    return 0; // optional, da embedded meist nie erreicht
+    return 0; 
 }

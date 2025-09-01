@@ -33,12 +33,13 @@ static uart_t _uartInstances[C_UART_MAX_INSTANCES];
 
 /*** prototypes **********************************************************/
 static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate);
-static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate);
 void _HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+
 /*** functions ***********************************************************/
+
 /*************************************************************************
- * This function initialises a uart port low level
- ************************************************************************/ 
+ * Low-level UART initialization
+ ************************************************************************/
 static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -98,7 +99,7 @@ static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate)
         return false;
     }
 
-    // activate NVIC
+    // NVIC configuration
     switch (port)
     {
         case UART_1:
@@ -120,8 +121,8 @@ static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate)
 }
 
 /*************************************************************************
-* This function
-************************************************************************/ 
+ * Internal RX callback wrapper
+ ************************************************************************/
 void _HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     for (int i = 0; i < _instanceCount; i++)
@@ -133,7 +134,7 @@ void _HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
             {
                 uart->rxCallback(uart->rxByte);
             }
-            // neuen RX-Interrupt starten
+            // restart RX interrupt
             HAL_UART_Receive_IT(&uart->_huart, &uart->rxByte, 1);
             break;
         }
@@ -141,39 +142,40 @@ void _HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /*************************************************************************
-* This function send single bytes 
-************************************************************************/ 
-bool uart_sendByte(uart_t* uart, uint8_t data)
+ * HAL callback override
+ ************************************************************************/
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    HAL_StatusTypeDef error = HAL_UART_Transmit(&uart->_huart, &data, 1, HAL_MAX_DELAY);
-    if (error == HAL_OK)
-    {
-        return true;
-    }
-    return false;
-}
-
-bool uart_sendBuffer(uart_t* uart, uint8_t *buffer, size_t len)
-{
-    HAL_StatusTypeDef error = HAL_UART_Transmit(&uart->_huart, buffer, len, HAL_MAX_DELAY);
-    if (error == HAL_OK)
-    {
-        return true;
-    }
-    return false;
+    _HAL_UART_RxCpltCallback(huart);
 }
 
 /*************************************************************************
-* This function registrates the callback function from higher layer
-************************************************************************/ 
+ * Send single byte
+ ************************************************************************/
+bool uart_sendByte(uart_t* uart, uint8_t data)
+{
+    return HAL_UART_Transmit(&uart->_huart, &data, 1, HAL_MAX_DELAY) == HAL_OK;
+}
+
+/*************************************************************************
+ * Send buffer
+ ************************************************************************/
+bool uart_sendBuffer(uart_t* uart, uint8_t *buffer, size_t len)
+{
+    return HAL_UART_Transmit(&uart->_huart, buffer, len, HAL_MAX_DELAY) == HAL_OK;
+}
+
+/*************************************************************************
+ * Register RX callback
+ ************************************************************************/
 void uart_registerRxCallback(uart_t* uart, handler_cb_t cb)
 {
     uart->rxCallback = cb;
 }
 
 /*************************************************************************
-* This function
-************************************************************************/ 
+ * IRQ Handlers
+ ************************************************************************/
 void USART1_IRQHandler(void)
 {
     for (int i = 0; i < _instanceCount; i++)
@@ -197,9 +199,10 @@ void UART4_IRQHandler(void)
         }
     }
 }
+
 /*************************************************************************
-* This function initalises an uart port
-************************************************************************/ 
+ * UART initialization
+ ************************************************************************/
 uart_t* uart_init(uart_port_t port, uint32_t baudRate)
 {
     if (_instanceCount >= C_UART_MAX_INSTANCES) 

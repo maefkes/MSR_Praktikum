@@ -23,18 +23,22 @@ typedef enum
     E_MATLABCOMERROR_IN_PROGRESS,
     E_MATLABCOMERROR_INVALID_SIGN,
     E_MATLABCOMERROR_INVALID_POINTER,
-    E_MATLABCOMERROR_INVALID_INSTANCE
+    E_MATLABCOMERROR_INVALID_INSTANCE,
+    E_MATLABCOMERROR_SEND,
+    E_MATLABCOMERROR_UNK_CMD
 } matlab_communication_error_t;
 
- /*
- typedef enum
+ typedef struct
  {
+    uint16_t* parameter1;
+    uint16_t* parameter2;
+    uint16_t* parameter3;
+    uint8_t command;
 
- } matlab_communication_current_protocol;
- */
+ } matlab_communication_data_t;
 /*** macros *************************************************************/
  /*** functions ************************************************************/
-matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, uint16_t* value1, uint16_t* value2, uint16_t* value3);
+matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, matlab_communication_data_t* data);
 matlab_communication_error_t matlabCommunication_getParserError(matlab_communication_t* matlabCom);
 matlab_communication_t* matlabCommunication_init(uart_t* uart);
 

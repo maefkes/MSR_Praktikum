@@ -16,11 +16,17 @@ int main(void)
     uart4 = uart_init(UART_4, 57600);
     matlabCommunication = matlabCommunication_init(uart4);
 
-    uint16_t a = 10;
-    uint16_t b = 20;
-    uint16_t c = 30;
+    uint16_t p1 = 10;
+    uint16_t p2 = 20;
+    uint16_t p3 = 30;
 
-    matlabCommunication_sendParameter(matlabCommunication, &a, &b, &c);
+    matlab_communication_data_t data;
+    data.command    = CMD_P1;
+    data.parameter1 = &p1;
+    data.parameter2 = &p2;
+    data.parameter3 = &p3;
+
+    matlabCommunication_sendParameter(matlabCommunication, &data);
 
     volatile matlab_communication_error_t error;
 

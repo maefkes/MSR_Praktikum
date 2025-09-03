@@ -14,13 +14,16 @@
 /*** macros ***************************************************************/
 #define C_MATLABCOM_MAX_INSTANCES (2u)
 #define C_MATLABCOM_MAX_BUFFER_SIZE (30u)
+// parser commands
+#define CMD_P1 0x01
+#define CMD_P2 0x02
 // protocol frame data
 #define C_MATLABCOM_STX  (0x02) // start sign
 #define C_MATLABCOM_US   (0x1F) // seperator
 #define C_MATLABCOM_ETX  (0x03) // end sign
 
 /*** definitions **********************************************************/
-typedef void (*parser_state_t)(matlab_communication_t* this, const uint8_t sign);
+typedef void (*parser_state_t)(matlab_communication_t* matlabCom, const uint8_t sign);
 
 struct matlab_communication_s
 {
@@ -47,6 +50,8 @@ static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input);
 // state machine functions
 static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t sign);
+static void _parserState_p1(matlab_communication_t* matlabCom, uint8_t sign);
+static void _parserState_p2(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uint8_t sign);
 
 /*** functions ************************************************************/
@@ -55,21 +60,25 @@ static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uin
  **************************************************************************/ 
 static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input)
 {
-    if (input >= '0' && input <= '9')
-    {
-        uint8_t digit = input - '0';
-        matlabCom->numContainer = matlabCom->numContainer * 16 + digit;
-        return true;
+    uint8_t digit;
+
+    if (input >= '0' && input <= '9') {
+        digit = input - '0';
     }
-    
-    else if (input >= 'A' && input <= 'F')
-    {
-        uint8_t digit = input - 'A' + 0xA;
-        matlabCom->numContainer = matlabCom->numContainer * 16 + digit;
-        return true;
+    else if (input >= 'A' && input <= 'F') {
+        digit = input - 'A' + 0xA;
     }
-    return false;
+    else if (input >= 'a' && input <= 'f') {
+        digit = input - 'a' + 0xA;
+    }
+    else {
+        return false;
+    }
+
+    matlabCom->numContainer = matlabCom->numContainer * 16 + digit;
+    return true;
 }
+
 /***************************************************************************
  * This function 
  **************************************************************************/ 
@@ -93,18 +102,47 @@ static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t 
 {
     if(matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
 
+    crc16_calculate(matlabCom->checksum, sign);
+
     bool success = _asciiToNumber(matlabCom, sign);
 
-    if (success)
+    if (sign == C_MATLABCOM_US)
     {
-        // calculates crc only for valide signs
-        crc16_calculate(matlabCom->checksum, sign);
+        switch(matlabCom->numContainer)
+        {
+            case CMD_P1:
+                matlabCom->numContainer = 0;
+                matlabCom->currentState = _parserState_p1;
+                break;
 
+            case CMD_P2:
+                matlabCom->numContainer = 0;
+                matlabCom->currentState = _parserState_p1;
+                break;
+
+            default:
+                matlabCom->error = E_MATLABCOMERROR_UNK_CMD;
+                break;
+        }
     }
-    else
+    else if (!success)
     {
         matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
     }
+}
+ /***************************************************************************
+ * This function
+ **************************************************************************/ 
+static void _parserState_p1(matlab_communication_t* matlabCom, uint8_t sign)
+{
+
+}
+ /***************************************************************************
+ * This function
+ **************************************************************************/ 
+static void _parserState_p2(matlab_communication_t* matlabCom, uint8_t sign)
+{
+
 }
  /***************************************************************************
  * This function
@@ -127,34 +165,34 @@ static void _uartRxWrapper(uint8_t byte)
 /***************************************************************************
  * This function
  **************************************************************************/ 
-matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, 
-                                                               uint16_t* value1, 
-                                                               uint16_t* value2, 
-                                                               uint16_t* value3)
+matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, matlab_communication_data_t* data)
 {
+    if(matlabCom == NULL || data == 0) {return E_MATLABCOMERROR_INVALID_POINTER;}
+
     char datagram[C_MATLABCOM_MAX_BUFFER_SIZE] = {0};
     char readyToSend[C_MATLABCOM_MAX_BUFFER_SIZE] = {0};
 
-    if(value1 != NULL && value2 != NULL && value3 != NULL)
+    if(data->parameter1 != NULL && data->parameter2 != NULL && data->parameter3 != NULL)
     {
-        snprintf(datagram, sizeof(datagram), "%hu%c%hu%c%hu",
-         *value1, C_MATLABCOM_US,
-         *value2, C_MATLABCOM_US,
-         *value3);
+        snprintf(datagram, sizeof(datagram), "%hu%c%hu%c%hu%c%hu",
+         data->command, C_MATLABCOM_US,
+         *data->parameter1, C_MATLABCOM_US,
+         *data->parameter2, C_MATLABCOM_US,
+         *data->parameter3);
 
-    crc16_insertIntoDatagram(matlabCom->checksum, sizeof(readyToSend), datagram, readyToSend);
-    uart_sendBuffer(matlabCom->communication, (uint8_t*)readyToSend, strlen(readyToSend));
+        crc16_insertIntoDatagram(matlabCom->checksum, sizeof(readyToSend), datagram, readyToSend);
+        uart_sendBuffer(matlabCom->communication, (uint8_t*)readyToSend, strlen(readyToSend));
     }
-    else if(value1 != NULL && value2 != NULL && value3 == NULL)
+    else if(data->parameter1 != NULL && data->parameter2 != NULL && data->parameter3 == NULL)
     {
         
     }
-    else if(value1 != NULL && value2 == NULL && value3 == NULL)
+    else if(data->parameter1 != NULL && data->parameter2 == NULL && data->parameter3 == NULL)
     {
     }
     else
-    {
-        return E_MATLABCOMERROR_NOK;
+    {   matlabCom->error = E_MATLABCOMERROR_NOK;
+        return matlabCom->error;
     }
 }
 /***************************************************************************

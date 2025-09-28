@@ -3,6 +3,7 @@
  * Created on: 24-Aug-2025 11:15:00
  * M. Schermutzki
  ***************************************************************************/
+
 /*** includes **************************************************************/
 #include "matlab_communication.h"
 #include "crc16.h"
@@ -12,14 +13,16 @@
 #include <string.h>
 
 /*** macros ***************************************************************/
-#define C_MATLABCOM_MAX_INSTANCES (2u)
-#define C_MATLABCOM_MAX_BUFFER_SIZE (30u)
+#define C_MATLABCOM_MAX_INSTANCES    (2u)
+#define C_MATLABCOM_MAX_BUFFER_SIZE  (30u)
+
 // parser commands
-#define CMD_P1 0x01
-#define CMD_P2 0x02
+#define CMD_MOTOR_VALUES (0x01)
+#define CMD_ 0x02
+
 // protocol frame data
 #define C_MATLABCOM_STX  (0x02) // start sign
-#define C_MATLABCOM_US   (0x1F) // seperator
+#define C_MATLABCOM_US   (0x1F) // separator
 #define C_MATLABCOM_ETX  (0x03) // end sign
 
 /*** definitions **********************************************************/
@@ -28,35 +31,36 @@ typedef void (*parser_state_t)(matlab_communication_t* matlabCom, const uint8_t 
 struct matlab_communication_s
 {
     matlab_communication_error_t error;
+    matlab_communication_data_t data;
     parser_state_t currentState;
+    matlabData_cb_t dataCallback;
     uart_t* communication;
     crc16_t* checksum;
     uint8_t fieldIndex;
-    uint32_t numContainer;
+    int32_t numContainer;
     uint8_t currentCommand;
-    bool initialised;
-
+    bool isValidEntry;
 };
-
-/*** local constants ******************************************************/
-
 
 /*** local variables ******************************************************/
 static matlab_communication_t _matlabComInstances[C_MATLABCOM_MAX_INSTANCES];
-static uint8_t _instanceCount = 0;
+static bool _initialised = false;
+matlabData_cb_t _dataCallback = NULL;
+
 /*** prototypes ***********************************************************/
 static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input);
 
 // state machine functions
 static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t sign);
-static void _parserState_p1(matlab_communication_t* matlabCom, uint8_t sign);
-static void _parserState_p2(matlab_communication_t* matlabCom, uint8_t sign);
+static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uint8_t sign);
 
+
 /*** functions ************************************************************/
+
 /***************************************************************************
- * This function transforms ascii signs into numbers
+ * Transform ascii signs into numbers
  **************************************************************************/ 
 static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input)
 {
@@ -80,161 +84,251 @@ static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input)
 }
 
 /***************************************************************************
- * This function 
+ * State machine: idle
  **************************************************************************/ 
 static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign)
 {
     if (sign == C_MATLABCOM_STX)
     {
         crc16_reset(matlabCom->checksum);
+        matlabCom->numContainer = 0;
+        matlabCom->fieldIndex = 0;
         matlabCom->currentState = _parserState_readCommand;
         matlabCom->error = E_MATLABCOMERROR_IN_PROGRESS;
     }
-    else
-    {
-        matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
-    }
 }
+
 /***************************************************************************
- * This function
+ * State machine: read command
  **************************************************************************/ 
 static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t sign)
 {
-    if(matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
-
-    crc16_calculate(matlabCom->checksum, sign);
-
-    bool success = _asciiToNumber(matlabCom, sign);
+    if (matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
 
     if (sign == C_MATLABCOM_US)
     {
-        switch(matlabCom->numContainer)
+        // US auch in CRC einbeziehen
+        crc16_calculate(matlabCom->checksum, sign);
+
+        // Command fertig
+        if (matlabCom->numContainer == CMD_MOTOR_VALUES)
         {
-            case CMD_P1:
-                matlabCom->numContainer = 0;
-                matlabCom->currentState = _parserState_p1;
-                break;
-
-            case CMD_P2:
-                matlabCom->numContainer = 0;
-                matlabCom->currentState = _parserState_p1;
-                break;
-
-            default:
-                matlabCom->error = E_MATLABCOMERROR_UNK_CMD;
-                break;
+            matlabCom->currentCommand = matlabCom->numContainer;
+            matlabCom->numContainer = 0;
+            matlabCom->currentState = _parserState_readMotorValues;
+        }
+        else
+        {
+            matlabCom->error = E_MATLABCOMERROR_UNK_CMD;
         }
     }
-    else if (!success)
+    else
     {
-        matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
-    }
-}
- /***************************************************************************
- * This function
- **************************************************************************/ 
-static void _parserState_p1(matlab_communication_t* matlabCom, uint8_t sign)
-{
-
-}
- /***************************************************************************
- * This function
- **************************************************************************/ 
-static void _parserState_p2(matlab_communication_t* matlabCom, uint8_t sign)
-{
-
-}
- /***************************************************************************
- * This function
- **************************************************************************/ 
-/***************************************************************************
- * Generic callback for all MATLAB communication instances. 
- * For each received byte, it calls the current state function of 
- * all instances with a valid UART pointer, ensuring independent 
- * and instance-specific parsing. 
- **************************************************************************/ 
-static void _uartRxWrapper(uint8_t byte)
-{
-    for (uint8_t i = 0; i < _instanceCount; i++)
-    {
-        // State-Funktion aufrufen
-        _matlabComInstances[i].currentState(&_matlabComInstances[i], byte);
+        bool success = _asciiToNumber(matlabCom, sign);
+        if (success)
+        {
+            crc16_calculate(matlabCom->checksum, sign);
+        }
+        else
+        {
+            matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
+        }
     }
 }
 
 /***************************************************************************
- * This function
+ * State machine: read motor values
+ **************************************************************************/ 
+static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint8_t sign)
+{
+    if (matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
+    if (matlabCom->currentCommand != CMD_MOTOR_VALUES) return;
+
+    if (sign == C_MATLABCOM_US)
+    {
+        // US auch in CRC einbeziehen
+        crc16_calculate(matlabCom->checksum, sign);
+
+        // Ein Feld abgeschlossen
+        switch (matlabCom->fieldIndex)
+        {
+            case 0: matlabCom->data.motor1 = matlabCom->numContainer; break;
+            case 1: matlabCom->data.motor2 = matlabCom->numContainer; break;
+            case 2: matlabCom->data.motor3 = matlabCom->numContainer; break;
+            case 3: matlabCom->data.motor4 = matlabCom->numContainer; break;
+            default: matlabCom->error = E_MATLABCOMERROR_NOK; return;
+        }
+
+        matlabCom->numContainer = 0;
+        matlabCom->fieldIndex++;
+
+        if (matlabCom->fieldIndex > 3)
+        {
+            matlabCom->fieldIndex = 0;
+            matlabCom->numContainer = 0;
+            matlabCom->currentState = _parserState_validateChecksum;
+        }
+    }
+    else
+    {
+        bool success = _asciiToNumber(matlabCom, sign);
+        if (success)
+        {
+            crc16_calculate(matlabCom->checksum, sign);
+        }
+        else
+        {
+            matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
+        }
+    }
+}
+
+
+/***************************************************************************
+ * State machine: validate checksum
+ **************************************************************************/ 
+static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uint8_t sign)
+{
+    if (matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
+
+    bool success = true;
+
+    if (sign == C_MATLABCOM_ETX)
+    {
+        // Vergleich mit berechneter Checksumme
+        if (crc16_get(matlabCom->checksum) == (uint16_t)matlabCom->numContainer)
+        {
+            if (matlabCom->dataCallback)
+            {
+                matlabCom->dataCallback(&matlabCom->data);
+            }
+            matlabCom->error = E_MATLABCOMERROR_OK;
+        }
+        else
+        {
+            matlabCom->error = E_MATLABCOMERROR_CHECKSUM_ERROR;
+        }
+
+        // Reset state machine
+        matlabCom->numContainer = 0;
+        matlabCom->fieldIndex = 0;
+        matlabCom->currentState = _parserState_idle;
+    }
+    else
+    {
+        success = _asciiToNumber(matlabCom, sign);
+        if (!success)
+        {
+            matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
+        }
+    }
+}
+
+
+/***************************************************************************
+ * UART RX wrapper for single instance
+ **************************************************************************/ 
+static void _uartRxWrapper(void* context, uint8_t byte)
+{
+    matlab_communication_t* matlabCom = (matlab_communication_t*) context;
+
+    if (matlabCom && matlabCom->isValidEntry && matlabCom->currentState)
+    {
+        matlabCom->currentState(matlabCom, byte);
+    }
+}
+
+/***************************************************************************
+ * Send MATLAB parameters
  **************************************************************************/ 
 matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, matlab_communication_data_t* data)
 {
-    if(matlabCom == NULL || data == 0) {return E_MATLABCOMERROR_INVALID_POINTER;}
+    if(matlabCom == NULL || data == NULL) return E_MATLABCOMERROR_INVALID_POINTER;
 
     char datagram[C_MATLABCOM_MAX_BUFFER_SIZE] = {0};
     char readyToSend[C_MATLABCOM_MAX_BUFFER_SIZE] = {0};
 
-    if(data->parameter1 != NULL && data->parameter2 != NULL && data->parameter3 != NULL)
+    if(data->parameter1 && data->parameter2 && data->parameter3)
     {
         snprintf(datagram, sizeof(datagram), "%hu%c%hu%c%hu%c%hu",
-         data->command, C_MATLABCOM_US,
-         *data->parameter1, C_MATLABCOM_US,
-         *data->parameter2, C_MATLABCOM_US,
-         *data->parameter3);
+                 data->command, C_MATLABCOM_US,
+                 *data->parameter1, C_MATLABCOM_US,
+                 *data->parameter2, C_MATLABCOM_US,
+                 *data->parameter3);
 
         crc16_insertIntoDatagram(matlabCom->checksum, sizeof(readyToSend), datagram, readyToSend);
         uart_sendBuffer(matlabCom->communication, (uint8_t*)readyToSend, strlen(readyToSend));
     }
-    else if(data->parameter1 != NULL && data->parameter2 != NULL && data->parameter3 == NULL)
-    {
-        
-    }
-    else if(data->parameter1 != NULL && data->parameter2 == NULL && data->parameter3 == NULL)
-    {
-    }
     else
-    {   matlabCom->error = E_MATLABCOMERROR_NOK;
+    {
+        matlabCom->error = E_MATLABCOMERROR_NOK;
         return matlabCom->error;
     }
+
+    return E_MATLABCOMERROR_OK;
 }
+
 /***************************************************************************
- * This functions returns parsing errors
+ * Return parser error
  **************************************************************************/
 matlab_communication_error_t matlabCommunication_getParserError(matlab_communication_t* matlabCom)
 {
-    if (matlabCom == NULL) {return E_MATLABCOMERROR_INVALID_POINTER;}
+    if (!matlabCom) return E_MATLABCOMERROR_INVALID_POINTER;
+    if (!matlabCom->isValidEntry) return E_MATLABCOMERROR_INVALID_INSTANCE;
 
-    if(matlabCom->initialised)
-    {
-        return matlabCom->error;
-    }
-    else
-    {
-        return E_MATLABCOMERROR_INVALID_INSTANCE;
-    }
+    return matlabCom->error;
+}
+/***************************************************************************
+ * 
+ **************************************************************************/
+void matlabCommunication_registerDataCallback(matlab_communication_t* matlabCom, matlabData_cb_t cb) 
+{
+    if (matlabCom) matlabCom->dataCallback = cb;
 }
 
 /***************************************************************************
- * This function
+ * Create new MATLAB communication instance
  **************************************************************************/ 
-matlab_communication_t* matlabCommunication_init(uart_t* uart)
+matlab_communication_t* matlabCommunication_new(uart_t* uart)
 {
-    if (uart == NULL || _instanceCount >= C_MATLABCOM_MAX_INSTANCES) {return NULL;}
+    if (!uart || !_initialised) return NULL;
 
-    // save the instances into an local array
-    matlab_communication_t* matlabCom = &_matlabComInstances[_instanceCount];
+    for (uint8_t i = 0; i < C_MATLABCOM_MAX_INSTANCES; i++)
+    {
+        if(!_matlabComInstances[i].isValidEntry)
+        {
+            matlab_communication_t* matlabCom = &_matlabComInstances[i];
 
-    matlabCom->communication = uart;
-    matlabCom->checksum = crc16_init(C_MATLABCOM_STX, C_MATLABCOM_US, C_MATLABCOM_ETX);
-    matlabCom->fieldIndex = 0;
-    matlabCom->numContainer = 0;
-    matlabCom->currentState = _parserState_idle;
-    matlabCom->error = E_MATLABCOMERROR_OK;
-    matlabCom->initialised = true;
+            matlabCom->communication = uart;
+            matlabCom->checksum = crc16_new(C_MATLABCOM_STX, C_MATLABCOM_US, C_MATLABCOM_ETX);
+            matlabCom->fieldIndex = 0;
+            matlabCom->numContainer = 0;
+            matlabCom->currentState = _parserState_idle;
+            matlabCom->error = E_MATLABCOMERROR_OK;
+            matlabCom->isValidEntry = true;
 
-    // Register a global UART RX callback to automatically handle incoming bytes 
-    // and feed them into the MATLAB parser state machine.
-    uart_registerRxCallback(uart, _uartRxWrapper);
+            // Register UART RX callback with context
+            uart_registerRxCallback(uart, _uartRxWrapper, matlabCom);
+            return matlabCom;
+        }
+    }
 
-    _instanceCount++;
-     return  matlabCom;
+    return NULL;
 }
 
+/***************************************************************************
+ * Initialize MATLAB communication system
+ **************************************************************************/ 
+void matlabCommunication_init()
+{
+    if (!_initialised)
+    {
+        for (uint8_t i = 0; i < C_MATLABCOM_MAX_INSTANCES; i++)
+        {
+            _matlabComInstances[i] = (matlab_communication_t){0};
+        }
+        uart_init();
+        crc16_init();
+        _initialised = true;
+    }
+}

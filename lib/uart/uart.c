@@ -1,13 +1,11 @@
 /**************************************************************************
  * uart.c
  * Created on: 20-Aug-2025 21:00:00
- * M. Schermutzki
- * DO NOT MODIFY THIS FILE
  **************************************************************************/
+
 /*** includes *************************************************************/
 #include <stdbool.h>
 #include <stddef.h>  
-
 #include "uart.h"
 #include "stm32f2xx_hal.h"
 
@@ -15,7 +13,7 @@
 #define C_UART_MAX_INSTANCES  (6u)   
 
 /*** local constants ******************************************************/
-static uint8_t _instanceCount = 0;
+static bool _initialised = false;
 
 /*** definitions **********************************************************/
 struct uart_s
@@ -27,7 +25,8 @@ struct uart_s
 
     UART_HandleTypeDef _huart;
     uart_port_t port;
-    handler_cb_t rxCallback;
+    handler_cb_with_context_t rxCallback;
+    void* context;   // optionaler Kontext für den Callback
 };
 
 /*** local variables *****************************************************/
@@ -35,13 +34,12 @@ static uart_t _uartInstances[C_UART_MAX_INSTANCES];
 
 /*** prototypes **********************************************************/
 static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate);
-void _HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 
 /*** functions ***********************************************************/
 
 /*************************************************************************
- * Low-level UART initialization
- ************************************************************************/
+ * Low-level Init eines Ports
+ ************************************************************************/ 
 static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate)
 {
     GPIO_InitTypeDef GPIO_InitStruct = {0};
@@ -85,7 +83,7 @@ static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate)
             break;
 
         default:
-            return false; 
+            return false; // ungültiger Port
     }
 
     uart->_huart.Init.BaudRate     = baudRate;
@@ -97,11 +95,9 @@ static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate)
     uart->_huart.Init.OverSampling = UART_OVERSAMPLING_16;
 
     if (HAL_UART_Init(&uart->_huart) != HAL_OK)
-    {
         return false;
-    }
 
-    // NVIC configuration
+    // NVIC aktivieren
     switch (port)
     {
         case UART_1:
@@ -116,114 +112,128 @@ static bool _init_uartPort(uart_t* uart, uart_port_t port, uint32_t baudRate)
             return false;
     }
 
-    // start RX interrupt
+    // ersten RX-Interrupt starten
     HAL_UART_Receive_IT(&uart->_huart, &uart->rxByte, 1);
 
     return true;
 }
 
 /*************************************************************************
- * Internal RX callback wrapper
- ************************************************************************/
-void _HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+ * HAL Callback, wenn ein Byte empfangen wurde
+ ************************************************************************/ 
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
-    for (int i = 0; i < _instanceCount; i++)
+    for (uint8_t i = 0; i < C_UART_MAX_INSTANCES; i++)
     {
-        if (&_uartInstances[i]._huart == huart)
-        {
-            uart_t* uart = &_uartInstances[i];
-            if (uart->rxCallback)
-            {
-                uart->rxCallback(uart->rxByte);
-            }
-            // restart RX interrupt
-            HAL_UART_Receive_IT(&uart->_huart, &uart->rxByte, 1);
-            break;
-        }
+        uart_t* uart = &_uartInstances[i];
+
+        if (!uart->isValidEntry) continue;
+        if (&uart->_huart != huart) continue;
+
+        // User-Callback aufrufen, falls vorhanden
+        if (uart->rxCallback)
+            uart->rxCallback(uart->context, uart->rxByte);
+
+        // neuen RX-Interrupt starten
+        HAL_UART_Receive_IT(&uart->_huart, &uart->rxByte, 1);
+        break;
     }
 }
 
 /*************************************************************************
- * HAL callback override
- ************************************************************************/
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+ * Daten senden
+ ************************************************************************/ 
+void uart_sendByte(uart_t* uart, uint8_t data)
 {
-    _HAL_UART_RxCpltCallback(huart);
+    HAL_UART_Transmit(&uart->_huart, &data, 1, HAL_MAX_DELAY);
+}
+
+void uart_sendBuffer(uart_t* uart, uint8_t *buffer, size_t len)
+{
+    HAL_UART_Transmit(&uart->_huart, buffer, len, HAL_MAX_DELAY);
 }
 
 /*************************************************************************
- * Send single byte
- ************************************************************************/
-bool uart_sendByte(uart_t* uart, uint8_t data)
-{
-    return HAL_UART_Transmit(&uart->_huart, &data, 1, HAL_MAX_DELAY) == HAL_OK;
-}
-
-/*************************************************************************
- * Send buffer
- ************************************************************************/
-bool uart_sendBuffer(uart_t* uart, uint8_t *buffer, size_t len)
-{
-    return HAL_UART_Transmit(&uart->_huart, buffer, len, HAL_MAX_DELAY) == HAL_OK;
-}
-
-/*************************************************************************
- * Register RX callback
- ************************************************************************/
-void uart_registerRxCallback(uart_t* uart, handler_cb_t cb)
+ * Callback registrieren (inkl. Kontext)
+ ************************************************************************/ 
+void uart_registerRxCallback(uart_t* uart, handler_cb_with_context_t cb, void* context)
 {
     uart->rxCallback = cb;
+    uart->context = context;
 }
 
 /*************************************************************************
- * IRQ Handlers
- ************************************************************************/
+ * IRQ Handler für alle Ports dynamisch
+ ************************************************************************/ 
 void USART1_IRQHandler(void)
 {
-    for (int i = 0; i < _instanceCount; i++)
+    for (uint8_t i = 0; i < C_UART_MAX_INSTANCES; i++)
     {
-        if (_uartInstances[i].port == UART_1)
-        {
-            HAL_UART_IRQHandler(&_uartInstances[i]._huart);
-            break;
-        }
+        uart_t* uart = &_uartInstances[i];
+
+        if (!uart->isValidEntry) continue;
+        if (uart->port != UART_1) continue;
+
+        HAL_UART_IRQHandler(&uart->_huart);
+        break;
     }
 }
 
 void UART4_IRQHandler(void)
 {
-    for (int i = 0; i < _instanceCount; i++)
+    for (uint8_t i = 0; i < C_UART_MAX_INSTANCES; i++)
     {
-        if (_uartInstances[i].port == UART_4)
-        {
-            HAL_UART_IRQHandler(&_uartInstances[i]._huart);
-            break;
-        }
+        uart_t* uart = &_uartInstances[i];
+
+        if (!uart->isValidEntry) continue;
+        if (uart->port != UART_4) continue;
+
+        HAL_UART_IRQHandler(&uart->_huart);
+        break;
     }
 }
 
 /*************************************************************************
- * UART initialization
- ************************************************************************/
-uart_t* uart_init(uart_port_t port, uint32_t baudRate)
+ * UART initialisieren
+ ************************************************************************/ 
+uart_t* uart_new(uart_port_t port, uint32_t baudRate)
 {
-    if (_instanceCount >= C_UART_MAX_INSTANCES) 
+    if (!_initialised) return NULL;
+
+    for (uint8_t i = 0; i < C_UART_MAX_INSTANCES; i++) 
     {
-        return NULL; 
+        if (!_uartInstances[i].isValidEntry) 
+        {
+            uart_t* uart = &_uartInstances[i];
+
+            uart->instanceNumber = i;
+            uart->baudRate = baudRate;
+            uart->port = port;
+            uart->rxByte = 0;
+            uart->rxCallback = NULL;
+            uart->context = NULL;
+
+            uart->isValidEntry = _init_uartPort(uart, port, baudRate);
+            if (!uart->isValidEntry)
+            {
+                *uart = (uart_t){0};
+                return NULL;
+            }
+
+            return uart;
+        }
     }
 
-    uart_t* uart = &_uartInstances[_instanceCount];
-    uart->instanceNumber = _instanceCount;  
-    uart->baudRate = baudRate;
-    uart->port = port;
-    uart->rxByte = 0;
-    uart->isValidEntry = _init_uartPort(uart, uart->port, baudRate);
+    return NULL;
+}
 
-    if (!uart->isValidEntry)
+void uart_init(void)
+{
+    if (!_initialised)
     {
-        return NULL;
-    }
+        for (uint8_t i = 0; i < C_UART_MAX_INSTANCES; i++)
+            _uartInstances[i] = (uart_t){0};
 
-    _instanceCount++;
-    return uart;
+        _initialised = true;
+    }
 }

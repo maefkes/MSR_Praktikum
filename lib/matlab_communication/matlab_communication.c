@@ -192,11 +192,14 @@ static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uin
     if (matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
 
     bool success = true;
+    
 
     if (sign == C_MATLABCOM_ETX)
     {
-        // Vergleich mit berechneter Checksumme
-        if (crc16_get(matlabCom->checksum) == (uint16_t)matlabCom->numContainer)
+        uint16_t calculatedCrc = crc16_get(matlabCom->checksum);
+        uint16_t sendedCrc = (uint16_t)matlabCom->numContainer;
+       
+        if (calculatedCrc == sendedCrc)
         {
             if (matlabCom->dataCallback)
             {
@@ -211,6 +214,7 @@ static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uin
 
         // Reset state machine
         matlabCom->numContainer = 0;
+        calculatedCrc = 0;
         matlabCom->fieldIndex = 0;
         matlabCom->currentState = _parserState_idle;
     }

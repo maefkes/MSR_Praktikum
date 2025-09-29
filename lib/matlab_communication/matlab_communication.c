@@ -107,10 +107,8 @@ static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t 
 
     if (sign == C_MATLABCOM_US)
     {
-        // US auch in CRC einbeziehen
         crc16_calculate(matlabCom->checksum, sign);
 
-        // Command fertig
         if (matlabCom->numContainer == CMD_MOTOR_VALUES)
         {
             matlabCom->currentCommand = matlabCom->numContainer;
@@ -146,10 +144,9 @@ static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint
 
     if (sign == C_MATLABCOM_US)
     {
-        // US auch in CRC einbeziehen
+       
         crc16_calculate(matlabCom->checksum, sign);
 
-        // Ein Feld abgeschlossen
         switch (matlabCom->fieldIndex)
         {
             case 0: matlabCom->data.motor1 = matlabCom->numContainer; break;
@@ -201,10 +198,7 @@ static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uin
        
         if (calculatedCrc == sendedCrc)
         {
-            if (matlabCom->dataCallback)
-            {
-                matlabCom->dataCallback(&matlabCom->data);
-            }
+            matlabCom->dataCallback(&matlabCom->data);
             matlabCom->error = E_MATLABCOMERROR_OK;
         }
         else

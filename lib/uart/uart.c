@@ -19,7 +19,7 @@ static bool _initialised = false;
 struct uart_s
 {
     uint32_t baudRate;
-    bool isValidEntry;
+    bool isInUse;
     uint8_t instanceNumber;
     uint8_t rxByte;
 
@@ -127,7 +127,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     {
         uart_t* uart = &_uartInstances[i];
 
-        if (!uart->isValidEntry) continue;
+        if (!uart->isInUse) continue;
         if (&uart->_huart != huart) continue;
 
         // User-Callback aufrufen, falls vorhanden
@@ -171,7 +171,7 @@ void USART1_IRQHandler(void)
     {
         uart_t* uart = &_uartInstances[i];
 
-        if (!uart->isValidEntry) continue;
+        if (!uart->isInUse) continue;
         if (uart->port != UART_1) continue;
 
         HAL_UART_IRQHandler(&uart->_huart);
@@ -185,7 +185,7 @@ void UART4_IRQHandler(void)
     {
         uart_t* uart = &_uartInstances[i];
 
-        if (!uart->isValidEntry) continue;
+        if (!uart->isInUse) continue;
         if (uart->port != UART_4) continue;
 
         HAL_UART_IRQHandler(&uart->_huart);
@@ -202,7 +202,7 @@ uart_t* uart_new(uart_port_t port, uint32_t baudRate)
 
     for (uint8_t i = 0; i < C_UART_MAX_INSTANCES; i++) 
     {
-        if (!_uartInstances[i].isValidEntry) 
+        if (!_uartInstances[i].isInUse) 
         {
             uart_t* uart = &_uartInstances[i];
 
@@ -213,8 +213,8 @@ uart_t* uart_new(uart_port_t port, uint32_t baudRate)
             uart->rxCallback = NULL;
             uart->context = NULL;
 
-            uart->isValidEntry = _init_uartPort(uart, port, baudRate);
-            if (!uart->isValidEntry)
+            uart->isInUse = _init_uartPort(uart, port, baudRate);
+            if (!uart->isInUse)
             {
                 *uart = (uart_t){0};
                 return NULL;
@@ -232,8 +232,9 @@ void uart_init(void)
     if (!_initialised)
     {
         for (uint8_t i = 0; i < C_UART_MAX_INSTANCES; i++)
-            _uartInstances[i] = (uart_t){0};
-
+        {
+            _uartInstances[i].isInUse = false;
+        }
         _initialised = true;
     }
 }

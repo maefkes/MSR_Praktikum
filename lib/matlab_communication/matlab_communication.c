@@ -39,7 +39,7 @@ struct matlab_communication_s
     uint8_t fieldIndex;
     int32_t numContainer;
     uint8_t currentCommand;
-    bool isValidEntry;
+    bool isInUse;
 };
 
 /*** local variables ******************************************************/
@@ -230,7 +230,7 @@ static void _uartRxWrapper(void* context, uint8_t byte)
 {
     matlab_communication_t* matlabCom = (matlab_communication_t*) context;
 
-    if (matlabCom && matlabCom->isValidEntry && matlabCom->currentState)
+    if (matlabCom && matlabCom->isInUse && matlabCom->currentState)
     {
         matlabCom->currentState(matlabCom, byte);
     }
@@ -272,7 +272,7 @@ matlab_communication_error_t matlabCommunication_sendParameter(matlab_communicat
 matlab_communication_error_t matlabCommunication_getParserError(matlab_communication_t* matlabCom)
 {
     if (!matlabCom) return E_MATLABCOMERROR_INVALID_POINTER;
-    if (!matlabCom->isValidEntry) return E_MATLABCOMERROR_INVALID_INSTANCE;
+    if (!matlabCom->isInUse) return E_MATLABCOMERROR_INVALID_INSTANCE;
 
     return matlabCom->error;
 }
@@ -293,7 +293,7 @@ matlab_communication_t* matlabCommunication_new(uart_t* uart)
 
     for (uint8_t i = 0; i < C_MATLABCOM_MAX_INSTANCES; i++)
     {
-        if(!_matlabComInstances[i].isValidEntry)
+        if(!_matlabComInstances[i].isInUse)
         {
             matlab_communication_t* matlabCom = &_matlabComInstances[i];
 
@@ -303,7 +303,7 @@ matlab_communication_t* matlabCommunication_new(uart_t* uart)
             matlabCom->numContainer = 0;
             matlabCom->currentState = _parserState_idle;
             matlabCom->error = E_MATLABCOMERROR_OK;
-            matlabCom->isValidEntry = true;
+            matlabCom->isInUse = true;
 
             // Register UART RX callback with context
             uart_registerRxCallback(uart, _uartRxWrapper, matlabCom);
@@ -323,7 +323,7 @@ void matlabCommunication_init()
     {
         for (uint8_t i = 0; i < C_MATLABCOM_MAX_INSTANCES; i++)
         {
-            _matlabComInstances[i] = (matlab_communication_t){0};
+            _matlabComInstances[i].isInUse = false;
         }
         uart_init();
         crc16_init();

@@ -9,10 +9,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/*** macros ***************************************************************/
+/*** definitions *********************************************************/
 #define C_CRC16_MAX_INSTANCES (5u)
 
-/*** Lookup-Tabelle für CRC16-CCITT (0x1021, init=0xFFFF) *****************/
+/*** lookup table for CRC16-CCITT (0x1021, init=0xFFFF) *****************/
 static const uint16_t crc16_table[256] = {
     0x0000,0x1021,0x2042,0x3063,0x4084,0x50A5,0x60C6,0x70E7,
     0x8108,0x9129,0xA14A,0xB16B,0xC18C,0xD1AD,0xE1CE,0xF1EF,
@@ -48,41 +48,51 @@ static const uint16_t crc16_table[256] = {
     0x6E17,0x7E36,0x4E55,0x5E74,0x2E93,0x3EB2,0x0ED1,0x1EF0
 };
 
-/*** Strukturen ***********************************************************/
+/*** structures **********************************************************************************/
 struct crc16_s {
     uint8_t startSign;
     uint8_t seperator;
     uint8_t endSign;
     uint16_t currentSum;
-    bool isValidEntry;
+    bool isInUse;
 };
 
+/*** loval variables ****************************************************************************/
 static crc16_t _crc16Instances[C_CRC16_MAX_INSTANCES];
 static bool _initialised = false;
 
-/*** Funktionen ***********************************************************/
+/*** functions **********************************************************************************/
+/************************************************************************************************
+ * This function resets the calculated crc
+ ***********************************************************************************************/
 void crc16_reset(crc16_t* crc16)
 {
-    if(!crc16 || !crc16->isValidEntry) return;
+    if(!crc16 || !crc16->isInUse) return;
     crc16->currentSum = 0xFFFF;
 }
-
+/************************************************************************************************
+ * This function calculates the crc sign by sign
+ ***********************************************************************************************/
 void crc16_calculate(crc16_t* crc16, uint8_t data)
 {
-    if(!crc16 || !crc16->isValidEntry) return;
+    if(!crc16 || !crc16->isInUse) return;
     uint8_t idx = ((crc16->currentSum >> 8) ^ data) & 0xFF;
     crc16->currentSum = (crc16->currentSum << 8) ^ crc16_table[idx];
 }
-
+/************************************************************************************************
+ * This function return the calculated crc
+ ***********************************************************************************************/
 uint16_t crc16_get(crc16_t* crc16)
 {
-    if(!crc16 || !crc16->isValidEntry) return 0;
+    if(!crc16 || !crc16->isInUse) return 0;
     return crc16->currentSum;
 }
-
+/************************************************************************************************
+ * This function builds a datagram which is ready to send
+ ***********************************************************************************************/
 void crc16_insertIntoDatagram(crc16_t* crc16, size_t outputSize, const char* input, char* output)
 {
-    if (!crc16 || !input || !output || outputSize == 0 || !crc16->isValidEntry) 
+    if (!crc16 || !input || !output || outputSize == 0 || !crc16->isInUse) 
     {
         return; 
     }
@@ -107,34 +117,38 @@ void crc16_insertIntoDatagram(crc16_t* crc16, size_t outputSize, const char* inp
              checksumCalc,
              crc16->endSign);
 }
-
+/************************************************************************************************
+ * This function creates a new instance
+ ***********************************************************************************************/
 crc16_t* crc16_new(const uint8_t startSign, const uint8_t seperator, const uint8_t endSign)
 {
     if (!_initialised) {return NULL;}
 
     for (uint8_t i = 0; i < C_CRC16_MAX_INSTANCES; i++)
     {
-        if(!_crc16Instances[i].isValidEntry)
+        if(!_crc16Instances[i].isInUse)
         {
             crc16_t* crc16 = &_crc16Instances[i];
             crc16->startSign   = startSign;
             crc16->seperator   = seperator;
             crc16->endSign     = endSign;
             crc16->currentSum  = 0xFFFF;
-            crc16->isValidEntry = true;
+            crc16->isInUse = true;
             return crc16;
         }
     }
     return NULL; // no more slot available
 }
-
+/************************************************************************************************
+ * This function initialises the crc module
+ ***********************************************************************************************/
 void crc16_init()
 {
     if (!_initialised)
     {
         for (uint8_t i = 0; i < C_CRC16_MAX_INSTANCES; i++)
         {
-            _crc16Instances[i] = (crc16_t) {0};
+            _crc16Instances[i].isInUse = false;
         }
         _initialised = true;
     }

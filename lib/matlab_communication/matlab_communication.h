@@ -12,9 +12,11 @@
 #include <stddef.h>
 #include "uart.h"
 /*** definitions ********************************************************/
+#define C_MATLABCOM_ROLL_PITCH_DATA  (0x04)
+#define C_MATLABCOM_YAW_DATA   (0x06)
+#define C_MATLABCOM_ANGLE_DATA (0x07)
+
 typedef struct matlab_communication_s matlab_communication_t;
-
-
 
 typedef enum
 {
@@ -29,19 +31,55 @@ typedef enum
     E_MATLABCOMERROR_CHECKSUM_ERROR
 } matlab_communication_error_t;
 
- typedef struct
- {
-    // variables for sending
+typedef enum
+{
+    E_MATLABCOM_CMD_SET_MOTOR_VALUE   = 0x01,
+    E_MATLABCOM_CMD_SET_PID_ANGLE_VALUES = 0x02
+} matlab_communication_practical_cmd_t;
+
+typedef struct
+{
     uint16_t* parameter1;
     uint16_t* parameter2;
     uint16_t* parameter3;
     uint8_t command;
+} matlab_communication_send_data_t;
 
-    //variables for parsing
+typedef struct
+{
     unsigned char motor1;
     unsigned char motor2;
     unsigned char motor3;
     unsigned char motor4;
+}matlab_communication_motor_data_t;
+
+typedef struct 
+{
+    volatile double pPitch_Roll;
+    volatile double iPitch_Roll;
+    volatile double dPitch_Roll;
+
+    volatile double pYaw;
+    volatile double iYaw;
+    volatile double dYaw;
+
+    volatile double targetAngleRoll;
+    volatile double targetAnglePitch;
+    volatile double targetAngleYaw;
+
+} matlab_communication_Pid_Angle_data_t;
+
+ typedef struct
+ {
+    matlab_communication_practical_cmd_t cmd;
+    uint8_t currentPidAngleCmd;
+    union
+    {
+        matlab_communication_send_data_t sendData;
+        matlab_communication_motor_data_t motorData;
+        matlab_communication_Pid_Angle_data_t pidAngleData;
+    };
+   
  } matlab_communication_data_t;
 
 typedef void (*matlabData_cb_t)(matlab_communication_data_t*);

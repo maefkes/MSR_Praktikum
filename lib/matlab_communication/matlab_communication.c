@@ -13,12 +13,12 @@
 #include <string.h>
 
 /*** macros ***************************************************************/
-#define C_MATLABCOM_MAX_INSTANCES    (2u)
+#define C_MATLABCOM_MAX_INSTANCES    (1u)
 #define C_MATLABCOM_MAX_BUFFER_SIZE  (30u)
 
 // parser commands
 #define CMD_MOTOR_VALUES (0x01)
-#define CMD_ 0x02
+#define CMD_PID_ANGLE (0x02)
 
 // protocol frame data
 #define C_MATLABCOM_STX  (0x02) // start sign
@@ -49,11 +49,11 @@ matlabData_cb_t _dataCallback = NULL;
 
 /*** prototypes ***********************************************************/
 static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input);
-
 // state machine functions
 static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint8_t sign);
+static void _parserState_readPidAngle(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uint8_t sign);
 
 
@@ -86,17 +86,19 @@ static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input)
 /***************************************************************************
  * State machine: idle
  **************************************************************************/ 
-static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign)
-{
-    if (sign == C_MATLABCOM_STX)
-    {
-        crc16_reset(matlabCom->checksum);
-        matlabCom->numContainer = 0;
-        matlabCom->fieldIndex = 0;
-        matlabCom->currentState = _parserState_readCommand;
-        matlabCom->error = E_MATLABCOMERROR_IN_PROGRESS;
-    }
-}
+  static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign)
+  {
+      if (sign == C_MATLABCOM_STX)
+      {
+          crc16_reset(matlabCom->checksum);
+          matlabCom->numContainer = 0;
+          matlabCom->fieldIndex = 0;
+          matlabCom->data.currentPidAngleCmd = 0;  
+          matlabCom->currentState = _parserState_readCommand;
+          matlabCom->error = E_MATLABCOMERROR_IN_PROGRESS;
+      }
+  }
+  
 
 /***************************************************************************
  * State machine: read command
@@ -111,9 +113,17 @@ static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t 
 
         if (matlabCom->numContainer == CMD_MOTOR_VALUES)
         {
-            matlabCom->currentCommand = matlabCom->numContainer;
+            matlabCom->data.cmd = E_MATLABCOM_CMD_SET_MOTOR_VALUE;
+            matlabCom->currentCommand = CMD_MOTOR_VALUES;
             matlabCom->numContainer = 0;
             matlabCom->currentState = _parserState_readMotorValues;
+        }
+        else if(matlabCom->numContainer == CMD_PID_ANGLE)
+        {
+            matlabCom->data.cmd = E_MATLABCOM_CMD_SET_PID_ANGLE_VALUES;
+            matlabCom->currentCommand = CMD_PID_ANGLE;
+            matlabCom->numContainer = 0;
+            matlabCom->currentState = _parserState_readPidAngle;
         }
         else
         {
@@ -149,10 +159,10 @@ static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint
 
         switch (matlabCom->fieldIndex)
         {
-            case 0: matlabCom->data.motor1 = matlabCom->numContainer; break;
-            case 1: matlabCom->data.motor2 = matlabCom->numContainer; break;
-            case 2: matlabCom->data.motor3 = matlabCom->numContainer; break;
-            case 3: matlabCom->data.motor4 = matlabCom->numContainer; break;
+            case 0: matlabCom->data.motorData.motor1 = (unsigned char)matlabCom->numContainer; break;
+            case 1: matlabCom->data.motorData.motor2 = (unsigned char)matlabCom->numContainer; break;
+            case 2: matlabCom->data.motorData.motor3 = (unsigned char)matlabCom->numContainer; break;
+            case 3: matlabCom->data.motorData.motor4 = (unsigned char)matlabCom->numContainer; break;
             default: matlabCom->error = E_MATLABCOMERROR_NOK; return;
         }
 
@@ -179,8 +189,90 @@ static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint
         }
     }
 }
+/***************************************************************************
+ * State machine: 
+ **************************************************************************/ 
+static void _parserState_readPidAngle(matlab_communication_t* matlabCom, uint8_t sign)
+{
+    if (matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
 
+    if (sign == C_MATLABCOM_US)
+    {
+        crc16_calculate(matlabCom->checksum, sign);
 
+        if (matlabCom->data.currentPidAngleCmd == 0) 
+        {
+            
+            matlabCom->data.currentPidAngleCmd = (uint8_t)matlabCom->numContainer;
+
+            // check wether valide commands
+            if (matlabCom->data.currentPidAngleCmd != C_MATLABCOM_ROLL_PITCH_DATA &&
+                matlabCom->data.currentPidAngleCmd != C_MATLABCOM_YAW_DATA &&
+                matlabCom->data.currentPidAngleCmd != C_MATLABCOM_ANGLE_DATA)
+            {
+                matlabCom->error = E_MATLABCOMERROR_UNK_CMD;
+                return;
+            }
+
+            matlabCom->fieldIndex = 0;
+        }
+        else
+        {
+            switch(matlabCom->data.currentPidAngleCmd)
+            {
+                case C_MATLABCOM_ROLL_PITCH_DATA:
+                    switch(matlabCom->fieldIndex)
+                    {
+                        case 0: matlabCom->data.pidAngleData.pPitch_Roll = matlabCom->numContainer; break;
+                        case 1: matlabCom->data.pidAngleData.iPitch_Roll = matlabCom->numContainer; break;
+                        case 2: matlabCom->data.pidAngleData.dPitch_Roll = matlabCom->numContainer; break;
+                    }
+                    break;
+
+                case C_MATLABCOM_YAW_DATA:
+                    switch(matlabCom->fieldIndex)
+                    {
+                        case 0: matlabCom->data.pidAngleData.pYaw = matlabCom->numContainer; break;
+                        case 1: matlabCom->data.pidAngleData.iYaw = matlabCom->numContainer; break;
+                        case 2: matlabCom->data.pidAngleData.dYaw = matlabCom->numContainer; break;
+                    }
+                    break;
+
+                case C_MATLABCOM_ANGLE_DATA:
+                    switch(matlabCom->fieldIndex)
+                    {
+                        case 0: matlabCom->data.pidAngleData.targetAngleRoll = matlabCom->numContainer; break;
+                        case 1: matlabCom->data.pidAngleData.targetAnglePitch = matlabCom->numContainer; break;
+                        case 2: matlabCom->data.pidAngleData.targetAngleYaw = matlabCom->numContainer; break;
+                    }
+                    break;
+
+                default:
+                    matlabCom -> error = E_MATLABCOMERROR_UNK_CMD;
+                    return;
+            }
+
+            ++matlabCom -> fieldIndex;
+
+            if (matlabCom -> fieldIndex > 2) 
+            {   
+                matlabCom -> fieldIndex = 0;
+                matlabCom->currentState = _parserState_validateChecksum;
+            }
+        }
+        matlabCom -> numContainer=0;
+
+    }
+    else 
+    {   
+        bool success=_asciiToNumber(matlabCom,sign);
+        if(success) crc16_calculate(matlabCom -> checksum, sign);
+        else         
+        {
+            matlabCom-> error=E_MATLABCOMERROR_INVALID_SIGN;
+        }
+    }
+}
 /***************************************************************************
  * State machine: validate checksum
  **************************************************************************/ 
@@ -239,6 +331,7 @@ static void _uartRxWrapper(void* context, uint8_t byte)
 /***************************************************************************
  * Send MATLAB parameters
  **************************************************************************/ 
+/*
 matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, matlab_communication_data_t* data)
 {
     if(matlabCom == NULL || data == NULL) return E_MATLABCOMERROR_INVALID_POINTER;
@@ -265,7 +358,7 @@ matlab_communication_error_t matlabCommunication_sendParameter(matlab_communicat
 
     return E_MATLABCOMERROR_OK;
 }
-
+*/
 /***************************************************************************
  * Return parser error
  **************************************************************************/
@@ -281,7 +374,7 @@ matlab_communication_error_t matlabCommunication_getParserError(matlab_communica
  **************************************************************************/
 void matlabCommunication_registerDataCallback(matlab_communication_t* matlabCom, matlabData_cb_t cb) 
 {
-    if (matlabCom) matlabCom->dataCallback = cb;
+    if (matlabCom) {matlabCom->dataCallback = cb;}
 }
 
 /***************************************************************************

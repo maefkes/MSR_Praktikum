@@ -33,6 +33,7 @@ typedef enum
 
 typedef enum
 {
+    E_MATLABCOM_CMD_INITIAL = 0,    // save initialisation in QCSF_API.c
     E_MATLABCOM_CMD_SET_MOTOR_VALUE   = 0x01,
     E_MATLABCOM_CMD_SET_PID_ANGLE_VALUES = 0x02
 } matlab_communication_practical_cmd_t;
@@ -89,6 +90,7 @@ typedef void (*matlabData_cb_t)(matlab_communication_data_t*);
 matlab_communication_error_t matlabCommunication_sendParameter(matlab_communication_t* matlabCom, matlab_communication_data_t* data);
 matlab_communication_error_t matlabCommunication_getParserError(matlab_communication_t* matlabCom);
 void matlabCommunication_registerDataCallback(matlab_communication_t* matlabCom, matlabData_cb_t cb);
+void matlabCommunication_sendImuData(matlab_communication_t* matlabCom, int16_t x, int16_t y, int16_t z);
 
 matlab_communication_t* matlabCommunication_new(uart_t* uart);
 void matlabCommunication_init(void);

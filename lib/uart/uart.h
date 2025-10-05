@@ -29,7 +29,7 @@ typedef enum
 } uart_port_t;
 
 /*** functions ***********************************************************/
-void uart_sendBuffer(uart_t* uart, uint8_t *buffer, size_t len);
+void uart_sendBuffer(uart_t* uart, const uint8_t *buffer, size_t len);
 void uart_sendByte(uart_t* uart, uint8_t data);
 
 // Callback mit Kontext registrieren

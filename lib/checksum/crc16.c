@@ -110,7 +110,7 @@ void crc16_insertIntoDatagram(crc16_t* crc16, size_t outputSize, const char* inp
     checksumCalc = crc16_get(crc16);
 
     snprintf(output, outputSize,
-             "%c%s%c%hu%c",
+             "%c%s%c%04X%c",
              crc16->startSign,
              input,
              crc16->seperator,

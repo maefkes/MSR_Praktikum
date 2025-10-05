@@ -5,16 +5,16 @@
  ***************************************************************************/
 
 /*** includes **************************************************************/
-#include "matlab_communication.h"
-#include "crc16.h"
-
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
+#include "matlab_communication.h"
+#include "crc16.h"
 /*** macros ***************************************************************/
 #define C_MATLABCOM_MAX_INSTANCES    (1u)
-#define C_MATLABCOM_MAX_BUFFER_SIZE  (30u)
+#define C_MATLABCOM_MAX_BUFFER_SIZE  (25u)
 
 // parser commands
 #define CMD_MOTOR_VALUES (0x01)
@@ -36,6 +36,9 @@ struct matlab_communication_s
     matlabData_cb_t dataCallback;
     uart_t* communication;
     crc16_t* checksum;
+    char _datagram[C_MATLABCOM_MAX_BUFFER_SIZE];
+    char readyToSend[C_MATLABCOM_MAX_BUFFER_SIZE];
+    bool isNegative;
     uint8_t fieldIndex;
     int32_t numContainer;
     uint8_t currentCommand;
@@ -56,7 +59,6 @@ static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint
 static void _parserState_readPidAngle(matlab_communication_t* matlabCom, uint8_t sign);
 static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uint8_t sign);
 
-
 /*** functions ************************************************************/
 
 /***************************************************************************
@@ -66,16 +68,18 @@ static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input)
 {
     uint8_t digit;
 
+    if (input == '-' && matlabCom->numContainer == 0) {
+        matlabCom->isNegative = true;
+        return true;
+    }
+
     if (input >= '0' && input <= '9') {
         digit = input - '0';
-    }
-    else if (input >= 'A' && input <= 'F') {
+    } else if (input >= 'A' && input <= 'F') {
         digit = input - 'A' + 0xA;
-    }
-    else if (input >= 'a' && input <= 'f') {
+    } else if (input >= 'a' && input <= 'f') {
         digit = input - 'a' + 0xA;
-    }
-    else {
+    } else {
         return false;
     }
 
@@ -86,19 +90,18 @@ static bool _asciiToNumber(matlab_communication_t* matlabCom, const char input)
 /***************************************************************************
  * State machine: idle
  **************************************************************************/ 
-  static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign)
-  {
-      if (sign == C_MATLABCOM_STX)
-      {
-          crc16_reset(matlabCom->checksum);
-          matlabCom->numContainer = 0;
-          matlabCom->fieldIndex = 0;
-          matlabCom->data.currentPidAngleCmd = 0;  
-          matlabCom->currentState = _parserState_readCommand;
-          matlabCom->error = E_MATLABCOMERROR_IN_PROGRESS;
-      }
-  }
-  
+static void _parserState_idle(matlab_communication_t* matlabCom, uint8_t sign)
+{
+    if (sign == C_MATLABCOM_STX)
+    {
+        crc16_reset(matlabCom->checksum);
+        matlabCom->numContainer = 0;
+        matlabCom->fieldIndex = 0;
+        matlabCom->data.currentPidAngleCmd = 0;  
+        matlabCom->currentState = _parserState_readCommand;
+        matlabCom->error = E_MATLABCOMERROR_IN_PROGRESS;
+    }
+}
 
 /***************************************************************************
  * State machine: read command
@@ -133,14 +136,8 @@ static void _parserState_readCommand(matlab_communication_t* matlabCom, uint8_t 
     else
     {
         bool success = _asciiToNumber(matlabCom, sign);
-        if (success)
-        {
-            crc16_calculate(matlabCom->checksum, sign);
-        }
-        else
-        {
-            matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
-        }
+        if (success) crc16_calculate(matlabCom->checksum, sign);
+        else matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
     }
 }
 
@@ -154,7 +151,6 @@ static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint
 
     if (sign == C_MATLABCOM_US)
     {
-       
         crc16_calculate(matlabCom->checksum, sign);
 
         switch (matlabCom->fieldIndex)
@@ -179,18 +175,13 @@ static void _parserState_readMotorValues(matlab_communication_t* matlabCom, uint
     else
     {
         bool success = _asciiToNumber(matlabCom, sign);
-        if (success)
-        {
-            crc16_calculate(matlabCom->checksum, sign);
-        }
-        else
-        {
-            matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
-        }
+        if (success) crc16_calculate(matlabCom->checksum, sign);
+        else matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
     }
 }
+
 /***************************************************************************
- * State machine: 
+ * State machine: read PID/angle values (negative angles supported)
  **************************************************************************/ 
 static void _parserState_readPidAngle(matlab_communication_t* matlabCom, uint8_t sign)
 {
@@ -200,12 +191,11 @@ static void _parserState_readPidAngle(matlab_communication_t* matlabCom, uint8_t
     {
         crc16_calculate(matlabCom->checksum, sign);
 
+        // erstes Feld = Command
         if (matlabCom->data.currentPidAngleCmd == 0) 
         {
-            
             matlabCom->data.currentPidAngleCmd = (uint8_t)matlabCom->numContainer;
 
-            // check wether valide commands
             if (matlabCom->data.currentPidAngleCmd != C_MATLABCOM_ROLL_PITCH_DATA &&
                 matlabCom->data.currentPidAngleCmd != C_MATLABCOM_YAW_DATA &&
                 matlabCom->data.currentPidAngleCmd != C_MATLABCOM_ANGLE_DATA)
@@ -218,61 +208,66 @@ static void _parserState_readPidAngle(matlab_communication_t* matlabCom, uint8_t
         }
         else
         {
+            int32_t value = matlabCom->numContainer;
+            if (matlabCom->isNegative) 
+            {
+                value = -value;
+                matlabCom->isNegative = false;
+            }
+
             switch(matlabCom->data.currentPidAngleCmd)
             {
                 case C_MATLABCOM_ROLL_PITCH_DATA:
                     switch(matlabCom->fieldIndex)
                     {
-                        case 0: matlabCom->data.pidAngleData.pPitch_Roll = matlabCom->numContainer; break;
-                        case 1: matlabCom->data.pidAngleData.iPitch_Roll = matlabCom->numContainer; break;
-                        case 2: matlabCom->data.pidAngleData.dPitch_Roll = matlabCom->numContainer; break;
+                        case 0: matlabCom->data.pidAngleData.pPitch_Roll = value; break;
+                        case 1: matlabCom->data.pidAngleData.iPitch_Roll = value; break;
+                        case 2: matlabCom->data.pidAngleData.dPitch_Roll = value; break;
                     }
                     break;
 
                 case C_MATLABCOM_YAW_DATA:
                     switch(matlabCom->fieldIndex)
                     {
-                        case 0: matlabCom->data.pidAngleData.pYaw = matlabCom->numContainer; break;
-                        case 1: matlabCom->data.pidAngleData.iYaw = matlabCom->numContainer; break;
-                        case 2: matlabCom->data.pidAngleData.dYaw = matlabCom->numContainer; break;
+                        case 0: matlabCom->data.pidAngleData.pYaw = value; break;
+                        case 1: matlabCom->data.pidAngleData.iYaw = value; break;
+                        case 2: matlabCom->data.pidAngleData.dYaw = value; break;
                     }
                     break;
 
                 case C_MATLABCOM_ANGLE_DATA:
                     switch(matlabCom->fieldIndex)
                     {
-                        case 0: matlabCom->data.pidAngleData.targetAngleRoll = matlabCom->numContainer; break;
-                        case 1: matlabCom->data.pidAngleData.targetAnglePitch = matlabCom->numContainer; break;
-                        case 2: matlabCom->data.pidAngleData.targetAngleYaw = matlabCom->numContainer; break;
+                        case 0: matlabCom->data.pidAngleData.targetAngleRoll = value; break;
+                        case 1: matlabCom->data.pidAngleData.targetAnglePitch = value; break;
+                        case 2: matlabCom->data.pidAngleData.targetAngleYaw = value; break;
                     }
                     break;
 
                 default:
-                    matlabCom -> error = E_MATLABCOMERROR_UNK_CMD;
+                    matlabCom->error = E_MATLABCOMERROR_UNK_CMD;
                     return;
             }
 
-            ++matlabCom -> fieldIndex;
+            matlabCom->fieldIndex++;
 
-            if (matlabCom -> fieldIndex > 2) 
+            if (matlabCom->fieldIndex > 2) 
             {   
-                matlabCom -> fieldIndex = 0;
+                matlabCom->fieldIndex = 0;
                 matlabCom->currentState = _parserState_validateChecksum;
             }
         }
-        matlabCom -> numContainer=0;
 
+        matlabCom->numContainer = 0;
     }
     else 
     {   
-        bool success=_asciiToNumber(matlabCom,sign);
-        if(success) crc16_calculate(matlabCom -> checksum, sign);
-        else         
-        {
-            matlabCom-> error=E_MATLABCOMERROR_INVALID_SIGN;
-        }
+        bool success = _asciiToNumber(matlabCom, sign);
+        if(success) crc16_calculate(matlabCom->checksum, sign);
+        else matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
     }
 }
+
 /***************************************************************************
  * State machine: validate checksum
  **************************************************************************/ 
@@ -280,17 +275,17 @@ static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uin
 {
     if (matlabCom->error != E_MATLABCOMERROR_IN_PROGRESS) return;
 
-    bool success = true;
-    
-
     if (sign == C_MATLABCOM_ETX)
     {
         uint16_t calculatedCrc = crc16_get(matlabCom->checksum);
         uint16_t sendedCrc = (uint16_t)matlabCom->numContainer;
-       
+
         if (calculatedCrc == sendedCrc)
         {
-            matlabCom->dataCallback(&matlabCom->data);
+            if (matlabCom->dataCallback != NULL) 
+            {
+                matlabCom->dataCallback(&matlabCom->data);
+            }
             matlabCom->error = E_MATLABCOMERROR_OK;
         }
         else
@@ -298,19 +293,14 @@ static void _parserState_validateChecksum(matlab_communication_t* matlabCom, uin
             matlabCom->error = E_MATLABCOMERROR_CHECKSUM_ERROR;
         }
 
-        // Reset state machine
         matlabCom->numContainer = 0;
-        calculatedCrc = 0;
         matlabCom->fieldIndex = 0;
         matlabCom->currentState = _parserState_idle;
     }
     else
     {
-        success = _asciiToNumber(matlabCom, sign);
-        if (!success)
-        {
-            matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
-        }
+        bool success = _asciiToNumber(matlabCom, sign);
+        if (!success) matlabCom->error = E_MATLABCOMERROR_INVALID_SIGN;
     }
 }
 
@@ -375,6 +365,28 @@ matlab_communication_error_t matlabCommunication_getParserError(matlab_communica
 void matlabCommunication_registerDataCallback(matlab_communication_t* matlabCom, matlabData_cb_t cb) 
 {
     if (matlabCom) {matlabCom->dataCallback = cb;}
+}
+/***************************************************************************
+ * Send IMU data
+ **************************************************************************/ 
+void matlabCommunication_sendImuData(matlab_communication_t* matlabCom, int16_t x, int16_t y, int16_t z)
+{
+    if(matlabCom == NULL) return;
+
+    snprintf(matlabCom->_datagram, sizeof(matlabCom->_datagram),
+             "%hu%c%hu%c%hu",
+             x,
+             C_MATLABCOM_US, 
+             y,
+             C_MATLABCOM_US, 
+             z);
+
+    crc16_insertIntoDatagram(matlabCom->checksum, 
+                             sizeof(matlabCom->readyToSend), 
+                             matlabCom->_datagram, 
+                             matlabCom->readyToSend);
+
+    uart_sendBuffer(matlabCom->communication, (const uint8_t*)matlabCom->readyToSend, sizeof(matlabCom->readyToSend));
 }
 
 /***************************************************************************

@@ -148,7 +148,7 @@ void uart_sendByte(uart_t* uart, uint8_t data)
     HAL_UART_Transmit(&uart->_huart, &data, 1, HAL_MAX_DELAY);
 }
 
-void uart_sendBuffer(uart_t* uart, uint8_t *buffer, size_t len)
+void uart_sendBuffer(uart_t* uart, const uint8_t *buffer, size_t len)
 {
     HAL_UART_Transmit(&uart->_huart, buffer, len, HAL_MAX_DELAY);
 }
